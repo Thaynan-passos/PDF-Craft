@@ -29,6 +29,39 @@ export function hexToRgb(hex: string) {
   return rgb(r, g, b);
 }
 
+// Helper to ensure any image data URL is converted to PNG bytes compatible with pdf-lib
+async function convertDataUrlToPngBytes(dataUrl: string): Promise<Uint8Array> {
+  if (dataUrl.startsWith('data:image/png')) {
+    const base64Data = dataUrl.split(',')[1];
+    return Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
+  }
+
+  // Convert via HTML canvas to PNG for wide format compatibility (WebP, GIF, SVG, etc.)
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth || img.width || 300;
+        canvas.height = img.naturalHeight || img.height || 150;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          throw new Error('Canvas 2D context unavailable');
+        }
+        ctx.drawImage(img, 0, 0);
+        const pngDataUrl = canvas.toDataURL('image/png');
+        const base64Data = pngDataUrl.split(',')[1];
+        resolve(Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0)));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => reject(new Error('Falha ao carregar imagem para conversão'));
+    img.src = dataUrl;
+  });
+}
+
 export class PdfExporterService {
   /**
    * Exports an edited PDF with all annotations, watermarks, numbering, and page modifications
@@ -50,10 +83,7 @@ export class PdfExporterService {
     pagesInfo.forEach((pageMeta, idx) => {
       if (idx < pdfPages.length) {
         const page = pdfPages[idx];
-        if (pageMeta.rotation !== 0) {
-          const currentRotation = page.getRotation().angle;
-          page.setRotation(degrees((currentRotation + pageMeta.rotation) % 360));
-        }
+        page.setRotation(degrees(pageMeta.rotation % 360));
       }
     });
 
@@ -225,13 +255,8 @@ export class PdfExporterService {
           case 'image': {
             try {
               if (ann.dataUrl && ann.dataUrl.startsWith('data:image/')) {
-                const base64Data = ann.dataUrl.split(',')[1];
-                const imageBytes = Uint8Array.from(atob(base64Data), (c) => c.charCodeAt(0));
-
-                const isPng = ann.dataUrl.startsWith('data:image/png');
-                const embeddedImage = isPng
-                  ? await pdfDoc.embedPng(imageBytes)
-                  : await pdfDoc.embedJpg(imageBytes);
+                const imageBytes = await convertDataUrlToPngBytes(ann.dataUrl);
+                const embeddedImage = await pdfDoc.embedPng(imageBytes);
 
                 page.drawImage(embeddedImage, {
                   x: pdfX,
@@ -242,7 +267,7 @@ export class PdfExporterService {
                 });
               }
             } catch (err) {
-              console.warn('Could not embed image/signature in PDF export:', err);
+              console.warn('Não foi possível embutir imagem/assinatura no PDF:', err);
             }
             break;
           }

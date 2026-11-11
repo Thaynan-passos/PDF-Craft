@@ -101,7 +101,11 @@ export default function App() {
   }, []);
 
   // Core loader: takes raw Uint8Array and parses with PDF.js
-  const loadPdfBuffer = async (bytes: Uint8Array, title: string) => {
+  const loadPdfBuffer = async (
+    bytes: Uint8Array,
+    title: string,
+    preservedAnnotations?: Annotation[]
+  ) => {
     try {
       setIsLoading(true);
       setPdfBytes(bytes);
@@ -121,13 +125,14 @@ export default function App() {
       }
       setThumbnails(thumbs);
 
-      // Reset annotations & history
-      setAnnotations([]);
-      setHistory([[]]);
+      // Apply preserved annotations or reset cleanly
+      const nextAnnotations = preservedAnnotations ?? [];
+      setAnnotations(nextAnnotations);
+      setHistory([nextAnnotations]);
       setHistoryIndex(0);
       setSelectedAnnotationId(null);
     } catch (err) {
-      console.error('Failed to load PDF buffer:', err);
+      console.error('Falha ao carregar buffer do PDF:', err);
       alert('Não foi possível carregar o arquivo PDF. Verifique se o arquivo é válido.');
     } finally {
       setIsLoading(false);
@@ -167,14 +172,22 @@ export default function App() {
     pushToHistory(updated);
   };
 
-  const handleUpdateAnnotation = (id: string, updatedProps: Partial<Annotation>) => {
+  const handleUpdateAnnotation = (
+    id: string,
+    updatedProps: Partial<Annotation>,
+    commit: boolean = true
+  ) => {
     const updated = annotations.map((ann) => {
       if (ann.id === id) {
         return { ...ann, ...updatedProps } as Annotation;
       }
       return ann;
     });
-    pushToHistory(updated);
+    if (commit) {
+      pushToHistory(updated);
+    } else {
+      setAnnotations(updated);
+    }
   };
 
   const handleDeleteAnnotation = (id: string) => {
@@ -284,10 +297,9 @@ export default function App() {
           return ann;
         });
 
-      await loadPdfBuffer(newBytes, documentTitle);
-      setAnnotations(remappedAnnotations);
+      await loadPdfBuffer(newBytes, documentTitle, remappedAnnotations);
     } catch (err) {
-      console.error('Failed to reorder pages:', err);
+      console.error('Falha ao reordenar páginas:', err);
     }
   };
 
@@ -308,10 +320,9 @@ export default function App() {
           return a;
         });
 
-      await loadPdfBuffer(newBytes, documentTitle);
-      setAnnotations(remapped);
+      await loadPdfBuffer(newBytes, documentTitle, remapped);
     } catch (err) {
-      console.error('Failed to delete page:', err);
+      console.error('Falha ao excluir página:', err);
     }
   };
 
@@ -322,9 +333,18 @@ export default function App() {
       const [copiedPage] = await srcDoc.copyPages(srcDoc, [pageIndex]);
       srcDoc.insertPage(pageIndex + 1, copiedPage);
       const newBytes = await srcDoc.save();
-      await loadPdfBuffer(newBytes, documentTitle);
+
+      // Shift annotations on pages after the inserted one
+      const remapped = annotations.map((ann) => {
+        if (ann.pageIndex > pageIndex) {
+          return { ...ann, pageIndex: ann.pageIndex + 1 };
+        }
+        return ann;
+      });
+
+      await loadPdfBuffer(newBytes, documentTitle, remapped);
     } catch (err) {
-      console.error('Failed to duplicate page:', err);
+      console.error('Falha ao duplicar página:', err);
     }
   };
 
@@ -334,9 +354,18 @@ export default function App() {
       const srcDoc = await PDFDocument.load(pdfBytes);
       srcDoc.insertPage(atIndex, [595.28, 841.89]);
       const newBytes = await srcDoc.save();
-      await loadPdfBuffer(newBytes, documentTitle);
+
+      // Shift annotations on pages at or after the inserted blank page
+      const remapped = annotations.map((ann) => {
+        if (ann.pageIndex >= atIndex) {
+          return { ...ann, pageIndex: ann.pageIndex + 1 };
+        }
+        return ann;
+      });
+
+      await loadPdfBuffer(newBytes, documentTitle, remapped);
     } catch (err) {
-      console.error('Failed to insert blank page:', err);
+      console.error('Falha ao inserir página em branco:', err);
     }
   };
 
@@ -351,10 +380,10 @@ export default function App() {
       copiedPages.forEach((p) => baseDoc.addPage(p));
 
       const newBytes = await baseDoc.save();
-      await loadPdfBuffer(newBytes, documentTitle);
+      await loadPdfBuffer(newBytes, documentTitle, annotations);
       alert(`${copiedPages.length} páginas mescladas com sucesso ao final do documento!`);
     } catch (err) {
-      console.error('Failed to merge PDF:', err);
+      console.error('Falha ao mesclar PDF:', err);
       alert('Não foi possível mesclar o arquivo PDF.');
     }
   };

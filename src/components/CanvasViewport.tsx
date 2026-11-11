@@ -23,7 +23,7 @@ interface CanvasViewportProps {
   selectedAnnotationId: string | null;
   onSelectAnnotation: (id: string | null) => void;
   onAddAnnotation: (annotation: Annotation) => void;
-  onUpdateAnnotation: (id: string, updated: Partial<Annotation>) => void;
+  onUpdateAnnotation: (id: string, updated: Partial<Annotation>, commit?: boolean) => void;
   onDeleteAnnotation: (id: string) => void;
   onPageVisible: (pageIndex: number) => void;
 }
@@ -59,11 +59,11 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
   useEffect(() => {
     if (!pdfDoc) return;
 
-    let isMounted = true;
+    let isCancelled = false;
 
     pages.forEach(async (pageInfo, idx) => {
       const canvas = pageCanvasRefs.current[idx];
-      if (!canvas) return;
+      if (!canvas || isCancelled) return;
 
       try {
         await PdfRendererService.renderPageToCanvas(
@@ -74,12 +74,14 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
           pageInfo.rotation
         );
       } catch (err) {
-        console.error(`Error rendering page ${idx + 1}:`, err);
+        if (!isCancelled) {
+          console.error(`Erro ao renderizar página ${idx + 1}:`, err);
+        }
       }
     });
 
     return () => {
-      isMounted = false;
+      isCancelled = true;
     };
   }, [pdfDoc, pages, zoom]);
 
@@ -325,7 +327,7 @@ export const CanvasViewport: React.FC<CanvasViewportProps> = ({
                   isSelected={selectedAnnotationId === ann.id}
                   scale={zoom}
                   onSelect={() => onSelectAnnotation(ann.id)}
-                  onUpdate={(upd) => onUpdateAnnotation(ann.id, upd)}
+                  onUpdate={(upd, commit) => onUpdateAnnotation(ann.id, upd, commit)}
                   onDelete={() => onDeleteAnnotation(ann.id)}
                 />
               ))}

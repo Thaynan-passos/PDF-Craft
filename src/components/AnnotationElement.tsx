@@ -7,7 +7,7 @@ interface AnnotationElementProps {
   isSelected: boolean;
   scale: number;
   onSelect: () => void;
-  onUpdate: (updated: Partial<Annotation>) => void;
+  onUpdate: (updated: Partial<Annotation>, commit?: boolean) => void;
   onDelete: () => void;
 }
 
@@ -63,15 +63,19 @@ export const AnnotationElement: React.FC<AnnotationElementProps> = ({
     });
   };
 
+  const lastUpdatedRef = useRef<Partial<Annotation> | null>(null);
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (isDragging) {
         const dx = (e.clientX - dragStart.x) / scale;
         const dy = (e.clientY - dragStart.y) / scale;
-        onUpdate({
+        const nextProps: Partial<Annotation> = {
           x: Math.max(0, dragStart.origX + dx),
           y: Math.max(0, dragStart.origY + dy),
-        });
+        };
+        lastUpdatedRef.current = nextProps;
+        onUpdate(nextProps, false);
       } else if (isResizing && resizeCorner) {
         const dx = (e.clientX - resizeStart.x) / scale;
         const dy = (e.clientY - resizeStart.y) / scale;
@@ -99,16 +103,24 @@ export const AnnotationElement: React.FC<AnnotationElementProps> = ({
           newY = resizeStart.origY + (resizeStart.origH - newH);
         }
 
-        onUpdate({
+        const nextProps: Partial<Annotation> = {
           x: newX,
           y: newY,
           width: newW,
           height: newH,
-        });
+        };
+        lastUpdatedRef.current = nextProps;
+        onUpdate(nextProps, false);
       }
     };
 
     const handleMouseUp = () => {
+      if (isDragging || isResizing) {
+        if (lastUpdatedRef.current) {
+          onUpdate(lastUpdatedRef.current, true);
+          lastUpdatedRef.current = null;
+        }
+      }
       setIsDragging(false);
       setIsResizing(false);
       setResizeCorner(null);
@@ -215,18 +227,44 @@ export const AnnotationElement: React.FC<AnnotationElementProps> = ({
           />
         );
 
+      case 'draw':
+      case 'highlight':
+        return (
+          <svg className="w-full h-full overflow-visible pointer-events-none">
+            <polyline
+              points={(annotation.points || [])
+                .map((p) => `${(p.x - annotation.x) * scale},${(p.y - annotation.y) * scale}`)
+                .join(' ')}
+              fill="none"
+              stroke={annotation.color || (annotation.type === 'highlight' ? '#fde047' : '#2563eb')}
+              strokeWidth={(annotation.strokeWidth || (annotation.type === 'highlight' ? 16 : 2.5)) * scale}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={annotation.opacity ?? (annotation.type === 'highlight' ? 0.35 : 1)}
+            />
+          </svg>
+        );
+
       case 'line':
-      case 'arrow':
+      case 'arrow': {
+        const p1 = annotation.points?.[0] || { x: annotation.x, y: annotation.y };
+        const p2 = annotation.points?.[1] || { x: annotation.x + annotation.width, y: annotation.y + annotation.height };
+        const x1 = (p1.x - annotation.x) * scale;
+        const y1 = (p1.y - annotation.y) * scale;
+        const x2 = (p2.x - annotation.x) * scale;
+        const y2 = (p2.y - annotation.y) * scale;
+
         return (
           <svg className="w-full h-full overflow-visible pointer-events-none">
             {annotation.type === 'line' ? (
               <line
-                x1={0}
-                y1={0}
-                x2={width}
-                y2={height}
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
                 stroke={annotation.strokeColor || '#2563eb'}
                 strokeWidth={(annotation.strokeWidth || 2) * scale}
+                strokeLinecap="round"
               />
             ) : (
               <g>
@@ -246,18 +284,20 @@ export const AnnotationElement: React.FC<AnnotationElementProps> = ({
                   </marker>
                 </defs>
                 <line
-                  x1={0}
-                  y1={0}
-                  x2={width}
-                  y2={height}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
                   stroke={annotation.strokeColor || '#2563eb'}
                   strokeWidth={(annotation.strokeWidth || 2) * scale}
+                  strokeLinecap="round"
                   markerEnd={`url(#arrowhead-${annotation.id})`}
                 />
               </g>
             )}
           </svg>
         );
+      }
 
       case 'signature':
       case 'image':

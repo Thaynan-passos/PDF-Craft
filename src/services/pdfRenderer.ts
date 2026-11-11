@@ -1,15 +1,21 @@
 import * as pdfjsLib from 'pdfjs-dist';
 import { PageInfo } from '../types/pdf';
 
-// Configure worker safely
+// Configure worker safely with local URL fallback
 try {
   if (typeof window !== 'undefined') {
-    // Use unpkg / cdnjs as reliable worker URL matching version
-    const version = pdfjsLib.version || '4.0.379';
-    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+        'pdfjs-dist/build/pdf.worker.min.mjs',
+        import.meta.url
+      ).toString();
+    } catch {
+      const version = pdfjsLib.version || '4.0.379';
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+    }
   }
 } catch (e) {
-  console.warn('PDF.js worker initialization notice:', e);
+  console.warn('Aviso de inicialização do worker PDF.js:', e);
 }
 
 export interface RenderResult {
@@ -20,6 +26,7 @@ export interface RenderResult {
 
 export class PdfRendererService {
   private static pdfDocCache = new Map<string, pdfjsLib.PDFDocumentProxy>();
+  private static activeRenderTasks = new WeakMap<HTMLCanvasElement, { cancel: () => void }>();
 
   /**
    * Loads a PDF document from Uint8Array
@@ -66,10 +73,22 @@ export class PdfRendererService {
     scale: number = 1.5,
     userRotation: number = 0
   ): Promise<{ width: number; height: number }> {
+    // Cancel any ongoing render task on this canvas
+    const ongoingTask = this.activeRenderTasks.get(canvas);
+    if (ongoingTask) {
+      try {
+        ongoingTask.cancel();
+      } catch {
+        // Ignored if already completed
+      }
+      this.activeRenderTasks.delete(canvas);
+    }
+
     const pageNumber = pageIndex + 1;
     const page = await pdfDoc.getPage(pageNumber);
 
-    const totalRotation = (page.rotate + userRotation) % 360;
+    // userRotation represents the exact absolute rotation desired for the page
+    const totalRotation = userRotation % 360;
     const viewport = page.getViewport({ scale, rotation: totalRotation });
 
     // Ensure crisp rendering on HiDPI displays
@@ -94,9 +113,24 @@ export class PdfRendererService {
       enableWebGL: false,
     };
 
-    // Wait for render task to complete
-    await page.render(renderContext).promise;
-    ctx.restore();
+    const renderTask = page.render(renderContext);
+    this.activeRenderTasks.set(canvas, renderTask);
+
+    try {
+      // Wait for render task to complete
+      await renderTask.promise;
+    } catch (err: unknown) {
+      if (err && typeof err === 'object' && 'name' in err && err.name === 'RenderingCancelledException') {
+        // Cancelamento esperado ao mudar zoom ou página rapidamente
+        return { width: viewport.width, height: viewport.height };
+      }
+      throw err;
+    } finally {
+      ctx.restore();
+      if (this.activeRenderTasks.get(canvas) === renderTask) {
+        this.activeRenderTasks.delete(canvas);
+      }
+    }
 
     return {
       width: viewport.width,
