@@ -1,0 +1,6 @@
+{
+  "name": "DocuCraft PDF Studio",
+  "description": "Editor completo de PDF: anotações, texto, assinatura digital, organização de páginas, carimbos, marca d'água, censura e exportação avançada.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
